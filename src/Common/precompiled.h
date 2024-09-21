@@ -568,7 +568,7 @@ std::atomic<T>* _rawPtrToAtomic(T* ptr)
     return reinterpret_cast<std::atomic<T>*>(ptr);
 }
 
-#if defined(__GNUC__)
+#if defined(__GNUC__) && defined(ARCH_X86_64)
 #define ATTR_MS_ABI __attribute__((ms_abi))
 #else
 #define ATTR_MS_ABI
@@ -601,6 +601,9 @@ inline uint32 GetTitleIdLow(uint64 titleId)
 #include "Cafe/HW/MMU/MMU.h"
 #include "Cafe/HW/Espresso/PPCState.h"
 #include "Cafe/HW/Espresso/PPCCallback.h"
+
+// PPC stack trace printer
+void DebugLogStackTrace(struct OSThread_t* thread, MPTR sp, bool printSymbols = false);
 
 // generic formatter for enums (to underlying)
 template <typename Enum>

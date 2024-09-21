@@ -67,6 +67,7 @@ add_library(CemuCafe
   HW/Espresso/Recompiler/PPCFunctionBoundaryTracker.h
   HW/Espresso/Recompiler/PPCRecompiler.cpp
   HW/Espresso/Recompiler/PPCRecompiler.h
+  HW/Espresso/Recompiler/RecompilerTests.cpp
   HW/Espresso/Recompiler/IML/IML.h
   HW/Espresso/Recompiler/IML/IMLSegment.cpp
   HW/Espresso/Recompiler/IML/IMLSegment.h
@@ -372,7 +373,9 @@ add_library(CemuCafe
   OS/libs/gx2/GX2_Texture.h
   OS/libs/gx2/GX2_TilingAperture.cpp
   OS/libs/h264_avc/H264Dec.cpp
+  OS/libs/h264_avc/H264DecBackendAVC.cpp
   OS/libs/h264_avc/h264dec.h
+  OS/libs/h264_avc/H264DecInternal.h
   OS/libs/h264_avc/parser
   OS/libs/h264_avc/parser/H264Parser.cpp
   OS/libs/h264_avc/parser/H264Parser.h
@@ -461,6 +464,8 @@ add_library(CemuCafe
   OS/libs/nsyshid/BackendLibusb.h
   OS/libs/nsyshid/BackendWindowsHID.cpp
   OS/libs/nsyshid/BackendWindowsHID.h
+  OS/libs/nsyshid/Infinity.cpp
+  OS/libs/nsyshid/Infinity.h
   OS/libs/nsyshid/Skylander.cpp
   OS/libs/nsyshid/Skylander.h
   OS/libs/nsyskbd/nsyskbd.cpp

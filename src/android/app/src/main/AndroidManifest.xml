@@ -12,27 +12,21 @@
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"
-        android:isGame="true"
+        android:appCategory="game"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.Cemu"
         tools:targetApi="31">
         <activity
-            android:name=".EmulationActivity"
+            android:name=".emulation.EmulationActivity"
+            android:configChanges="orientation|screenSize"
             android:launchMode="singleTop"
             android:parentActivityName=".MainActivity"
             android:screenOrientation="userLandscape"
             tools:ignore="DiscouragedApi" />
         <activity
-            android:name=".InputOverlayConfigureActivity"
-            android:launchMode="singleTop"
-            android:parentActivityName=".SettingsActivity"
-            android:screenOrientation="userLandscape"
-            tools:ignore="DiscouragedApi" />
-
-        <activity
-            android:name=".SettingsActivity"
+            android:name=".settings.SettingsActivity"
             android:exported="false"
             android:parentActivityName=".MainActivity" />
         <activity

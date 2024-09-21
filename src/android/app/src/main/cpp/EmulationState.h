@@ -5,12 +5,12 @@
 #include "AndroidAudio.h"
 #include "AndroidEmulatedController.h"
 #include "AndroidFilesystemCallbacks.h"
+#include "Cafe/HW/Latte/Core/LatteOverlay.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/VulkanAPI.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/VulkanRenderer.h"
 #include "CafeSystemUtils.h"
 #include "Cafe/CafeSystem.h"
 #include "Cemu/GuiSystem/GuiSystem.h"
-#include "GameIconLoader.h"
 #include "GameTitleLoader.h"
 #include "Utils.h"
 #include "input/ControllerFactory.h"
@@ -18,10 +18,10 @@
 #include "input/api/Android/AndroidController.h"
 #include "input/api/Android/AndroidControllerProvider.h"
 
-int mainEmulatorHLE();
+void CemuCommonInit();
 
-class EmulationState {
-	GameIconLoader m_gameIconLoader;
+class EmulationState
+{
 	GameTitleLoader m_gameTitleLoader;
 	std::unordered_map<int64_t, GraphicPackPtr> m_graphicPacks;
 	void fillGraphicPacks()
@@ -33,27 +33,48 @@ class EmulationState {
 			m_graphicPacks[reinterpret_cast<int64_t>(graphicPack.get())] = graphicPack;
 		}
 	}
+	void onTouchEvent(sint32 x, sint32 y, bool isTV, std::optional<bool> status = {})
+	{
+		auto& instance = InputManager::instance();
+		auto& touchInfo = isTV ? instance.m_main_mouse : instance.m_pad_mouse;
+		std::scoped_lock lock(touchInfo.m_mutex);
+		touchInfo.position = {x, y};
+		if (status.has_value())
+			touchInfo.left_down = touchInfo.left_down_toggle = status.value();
+	}
+	WiiUMotionHandler m_wiiUMotionHandler{};
+	long m_lastMotionTimestamp;
 
   public:
 	void initializeEmulation()
 	{
+		g_config.SetFilename(ActiveSettings::GetConfigPath("settings.xml").generic_wstring());
 		g_config.Load();
 		FilesystemAndroid::setFilesystemCallbacks(std::make_shared<AndroidFilesystemCallbacks>());
 		NetworkConfig::LoadOnce();
 		InputManager::instance().load();
+		auto& instance = InputManager::instance();
 		InitializeGlobalVulkan();
 		createCemuDirectories();
-		mainEmulatorHLE();
+		LatteOverlay_init();
+		CemuCommonInit();
 		fillGraphicPacks();
 	}
 
 	void initializeActiveSettings(const fs::path& dataPath, const fs::path& cachePath)
 	{
-		ActiveSettings::LoadOnce({}, dataPath, dataPath, cachePath, dataPath);
+		std::set<fs::path> failedWriteAccess;
+		ActiveSettings::SetPaths(false, {}, dataPath, dataPath, cachePath, dataPath, failedWriteAccess);
 	}
 
 	void clearSurface(bool isMainCanvas)
 	{
+		if (!isMainCanvas)
+		{
+			auto renderer = static_cast<VulkanRenderer*>(g_renderer.get());
+			if (renderer)
+				renderer->StopUsingPadAndWait();
+		}
 	}
 
 	void notifySurfaceChanged(bool isMainCanvas)
@@ -62,16 +83,20 @@ class EmulationState {
 
 	void setSurface(JNIEnv* env, jobject surface, bool isMainCanvas)
 	{
+		cemu_assert_debug(surface != nullptr);
 		auto& windowHandleInfo = isMainCanvas ? GuiSystem::getWindowInfo().canvas_main : GuiSystem::getWindowInfo().canvas_pad;
 		if (windowHandleInfo.surface)
 		{
 			ANativeWindow_release(static_cast<ANativeWindow*>(windowHandleInfo.surface));
 			windowHandleInfo.surface = nullptr;
 		}
-		if (surface)
-			windowHandleInfo.surface = ANativeWindow_fromSurface(env, surface);
+		windowHandleInfo.surface = ANativeWindow_fromSurface(env, surface);
+		int width, height;
 		if (isMainCanvas)
-			GuiSystem::getWindowInfo().window_main.surface = windowHandleInfo.surface;
+			GuiSystem::getWindowPhysSize(width, height);
+		else
+			GuiSystem::getPadWindowPhysSize(width, height);
+		VulkanRenderer::GetInstance()->InitializeSurface({width, height}, isMainCanvas);
 	}
 
 	void setSurfaceSize(int width, int height, bool isMainCanvas)
@@ -164,20 +189,19 @@ class EmulationState {
 		else
 			androidEmulatedController.setDisabled();
 	}
-	void initializeRenderer()
+
+	void initializeRenderer(JNIEnv* env, jobject testSurface)
 	{
+		cemu_assert_debug(testSurface != nullptr);
+		// TODO: cleanup surface
+		GuiSystem::getWindowInfo().window_main.surface = ANativeWindow_fromSurface(env, testSurface);
 		g_renderer = std::make_unique<VulkanRenderer>();
 	}
-	void initializeRenderSurface(bool isMainCanvas)
+	void setReplaceTVWithPadView(bool showDRC)
 	{
-		int width, height;
-		if (isMainCanvas)
-			GuiSystem::getWindowPhysSize(width, height);
-		else
-			GuiSystem::getPadWindowPhysSize(width, height);
-		VulkanRenderer::GetInstance()->InitializeSurface({width, height}, isMainCanvas);
+		// Emulate pressing the TAB key for showing DRC instead of TV
+		GuiSystem::getWindowInfo().set_keystate(GuiSystem::PlatformKeyCodes::TAB, showDRC);
 	}
-
 	void setDPI(float dpi)
 	{
 		auto& windowInfo = GuiSystem::getWindowInfo();
@@ -215,24 +239,28 @@ class EmulationState {
 		m_gameTitleLoader.setOnTitleLoaded(onGameTitleLoaded);
 	}
 
-	const Image& getGameIcon(TitleId titleId)
+	void addGamesPath(const std::string& gamePath)
 	{
-		return m_gameIconLoader.getGameIcon(titleId);
+		auto& gamePaths = g_config.data().game_paths;
+		if (std::any_of(gamePaths.begin(), gamePaths.end(), [&](auto path) { return path == gamePath; }))
+			return;
+		gamePaths.push_back(gamePath);
+		g_config.Save();
+		CafeTitleList::ClearScanPaths();
+		for (auto& it : gamePaths)
+			CafeTitleList::AddScanPath(it);
+		CafeTitleList::Refresh();
 	}
 
-	void setOnGameIconLoaded(const std::shared_ptr<class GameIconLoadedCallback>& onGameIconLoaded)
+	void removeGamesPath(const std::string& gamePath)
 	{
-		m_gameIconLoader.setOnIconLoaded(onGameIconLoaded);
-	}
-
-	void addGamePath(const fs::path& gamePath)
-	{
-		m_gameTitleLoader.addGamePath(gamePath);
-	}
-
-	void requestGameIcon(TitleId titleId)
-	{
-		m_gameIconLoader.requestIcon(titleId);
+		auto& gamePaths = g_config.data().game_paths;
+		std::erase_if(gamePaths, [&](auto path) { return path == gamePath; });
+		g_config.Save();
+		CafeTitleList::ClearScanPaths();
+		for (auto& it : gamePaths)
+			CafeTitleList::AddScanPath(it);
+		CafeTitleList::Refresh();
 	}
 
 	void reloadGameTitles()
@@ -242,6 +270,7 @@ class EmulationState {
 
 	void startGame(TitleId titleId)
 	{
+		GuiSystem::getWindowInfo().set_keystates_up();
 		initializeAudioDevices();
 		CafeSystemUtils::startGame(titleId);
 	}
@@ -300,5 +329,32 @@ class EmulationState {
 			it.try_emplace("_disabled", "false");
 		}
 		g_config.Save();
+	}
+	void onTouchMove(sint32 x, sint32 y, bool isTV)
+	{
+		onTouchEvent(x, y, isTV);
+	}
+	void onTouchUp(sint32 x, sint32 y, bool isTV)
+	{
+		onTouchEvent(x, y, isTV, false);
+	}
+	void onTouchDown(sint32 x, sint32 y, bool isTV)
+	{
+		onTouchEvent(x, y, isTV, true);
+	}
+	void onMotion(long timestamp, float gyroX, float gyroY, float gyroZ, float accelX, float accelY, float accelZ)
+	{
+		float deltaTime = (timestamp - m_lastMotionTimestamp) * 1e-9f;
+		m_wiiUMotionHandler.processMotionSample(deltaTime, gyroX, gyroY, gyroZ, accelX * 0.098066f, -accelY * 0.098066f, -accelZ * 0.098066f);
+		m_lastMotionTimestamp = timestamp;
+		auto& deviceMotion = InputManager::instance().m_device_motion;
+		std::scoped_lock lock{deviceMotion.m_mutex};
+		deviceMotion.m_motion_sample = m_wiiUMotionHandler.getMotionSample();
+	}
+	void setMotionEnabled(bool enabled)
+	{
+		auto& deviceMotion = InputManager::instance().m_device_motion;
+		std::scoped_lock lock{deviceMotion.m_mutex};
+		deviceMotion.m_device_motion_enabled = enabled;
 	}
 };
